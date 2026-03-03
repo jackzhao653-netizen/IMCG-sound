@@ -1,0 +1,16 @@
+[
+  {
+    "id": "a52c5b15",
+    "name": "man",
+    "description": "man",
+    "created": "2026-03-02T05:11:55.050292",
+    "sample_audio": "profiles/a52c5b15.wav"
+  },
+  {
+    "id": "e9a55682",
+    "name": "yes",
+    "description": "yesman",
+    "created": "2026-03-02T05:08:33.274231",
+    "sample_audio": "profiles/e9a55682.wav"
+  }
+]

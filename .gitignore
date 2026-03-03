@@ -1,0 +1,14 @@
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+models/
+*.wav
+*.mp3
+voices/*.pt
+voices/*.npy
+dist/
+.vite-temp/
+tsconfig.tsbuildinfo

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vandi TTS Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; color: #fff; }
+  h1 span { color: #6cf; }
+  .subtitle { color: #888; margin-bottom: 24px; font-size: 0.9rem; }
+  .status { padding: 8px 14px; border-radius: 8px; background: #1a1a1a; margin-bottom: 20px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.ok { background: #4f4; }
+  .dot.off { background: #f44; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 8px 18px; border-radius: 8px 8px 0 0; background: #1a1a1a; border: 1px solid #333; border-bottom: none; cursor: pointer; color: #aaa; font-size: 0.9rem; transition: all 0.15s; }
+  .tab.active { background: #222; color: #6cf; border-color: #6cf; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 0 8px 8px 8px; padding: 20px; display: none; }
+  .panel.active { display: block; }
+  label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 4px; margin-top: 14px; }
+  label:first-child { margin-top: 0; }
+  textarea, input[type="text"], select { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #444; background: #111; color: #e0e0e0; font-size: 0.95rem; resize: vertical; }
+  textarea { min-height: 80px; }
+  input[type="file"] { margin-top: 4px; }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+  button.primary { margin-top: 18px; padding: 12px 24px; border-radius: 8px; border: none; background: #2a6; color: #fff; font-size: 1rem; cursor: pointer; font-weight: 600; transition: background 0.15s; }
+  button.primary:hover { background: #3b7; }
+  button.primary:disabled { background: #444; color: #888; cursor: not-allowed; }
+  .result { margin-top: 16px; padding: 14px; background: #111; border-radius: 8px; border: 1px solid #333; }
+  .result audio { width: 100%; margin-top: 8px; }
+  .result .meta { font-size: 0.8rem; color: #888; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #888; border-top-color: #6cf; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .voices-list { margin-top: 10px; }
+  .voice-chip { display: inline-block; padding: 4px 12px; background: #222; border: 1px solid #444; border-radius: 16px; font-size: 0.85rem; margin: 4px; cursor: pointer; }
+  .voice-chip:hover { border-color: #6cf; color: #6cf; }
+  .voice-chip.selected { border-color: #6cf; background: #1a2a3a; color: #6cf; }
+  .robot-toggle { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .robot-toggle input { width: 18px; height: 18px; accent-color: #6cf; }
+  .robot-toggle label { margin: 0; color: #6cf; font-size: 0.9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h1>🚗 <span>Vandi</span> TTS Test</h1>
+<p class="subtitle">Local Qwen3-TTS API — voice design, cloning & cached voices</p>
+
+<div class="status" id="status">
+  <div class="dot off" id="statusDot"></div>
+  <span id="statusText">Checking server...</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="design">🎨 Voice Design</div>
+  <div class="tab" data-tab="clone">🎤 Voice Clone</div>
+  <div class="tab" data-tab="create">✨ Create Voice</div>
+  <div class="tab" data-tab="speak">💬 Speak</div>
+</div>
+
+<!-- Voice Design -->
+<div class="panel active" id="panel-design">
+  <label>Text to speak</label>
+  <textarea id="design-text">Hello! I'm Vandi, your intelligent fuel cell robot assistant. How can I help you today?</textarea>
+  <div class="row">
+    <div>
+      <label>Language</label>
+      <select id="design-lang">
+        <option value="Auto">Auto</option>
+        <option value="English" selected>English</option>
+        <option value="Chinese">Chinese</option>
+        <option value="Japanese">Japanese</option>
+        <option value="Korean">Korean</option>
+      </select>
+    </div>
+    <div>
+      <label>Voice description</label>
+      <input type="text" id="design-instruct" value="A friendly, clear male assistant voice with a warm tone.">
+    </div>
+  </div>
+  <div class="robot-toggle">
+    <input type="checkbox" id="design-robot" checked>
+    <label for="design-robot">🤖 Robot voice effect</label>
+  </div>
+  <button class="primary" onclick="runDesign()">Generate</button>
+  <div class="result" id="result-design" style="display:none"></div>
+</div>
+
+<!-- Voice Clone -->
+<div class="panel" id="panel-clone">
+  <label>Text to speak</label>
+  <textarea id="clone-text">I've analyzed the fuel cell data. Everything looks nominal — hydrogen pressure is stable at 2.1 bar.</textarea>
+  <label>Reference audio file</label>
+  <input type="file" id="clone-audio" accept="audio/*">
+  <label>Reference text (transcript of the audio above)</label>
+  <textarea id="clone-ref-text" style="min-height:50px"></textarea>
+  <div class="row">
+    <div>
+      <label>Language</label>
+      <select id="clone-lang">
+        <option value="Auto">Auto</option>
+        <option value="English" selected>English</option>
+        <option value="Chinese">Chinese</option>
+      </select>
+    </div>
+  </div>
+  <div class="robot-toggle">
+    <input type="checkbox" id="clone-robot" checked>
+    <label for="clone-robot">🤖 Robot voice effect</label>
+  </div>
+  <button class="primary" onclick="runClone()">Clone & Speak</button>
+  <div class="result" id="result-clone" style="display:none"></div>
+</div>
+
+<!-- Create Voice -->
+<div class="panel" id="panel-create">
+  <p style="color:#aaa;font-size:0.9rem;margin-bottom:12px;">Design a voice and save it for reuse. Uses VoiceDesign to generate a reference clip, then caches it so you can use it with "Speak" tab.</p>
+  <label>Voice name</label>
+  <input type="text" id="create-name" value="vandi">
+  <label>Voice description</label>
+  <input type="text" id="create-instruct" value="A friendly, clear, slightly robotic male assistant voice with a warm and helpful tone.">
+  <div class="row">
+    <div>
+      <label>Sample text (for reference clip)</label>
+      <input type="text" id="create-sample" value="Hello, I am Vandi, your intelligent assistant. I'm here to help you with anything you need.">
+    </div>
+    <div>
+      <label>Language</label>
+      <select id="create-lang">
+        <option value="English" selected>English</option>
+        <option value="Chinese">Chinese</option>
+      </select>
+    </div>
+  </div>
+  <button class="primary" onclick="runCreate()">Create Voice</button>
+  <div class="result" id="result-create" style="display:none"></div>
+
+  <h3 style="margin-top:20px;font-size:0.95rem;color:#aaa;">Or upload a voice to clone:</h3>
+  <label>Voice name</label>
+  <input type="text" id="upload-name" value="my-voice">
+  <label>Audio file</label>
+  <input type="file" id="upload-audio" accept="audio/*">
+  <label>Transcript (optional, improves quality)</label>
+  <input type="text" id="upload-ref-text" value="">
+  <button class="primary" onclick="runUpload()">Upload & Save Voice</button>
+  <div class="result" id="result-upload" style="display:none"></div>
+</div>
+
+<!-- Speak -->
+<div class="panel" id="panel-speak">
+  <label>Cached voices</label>
+  <div class="voices-list" id="voices-list"><em style="color:#666">No voices cached yet. Create one first.</em></div>
+  <label>Text to speak</label>
+  <textarea id="speak-text">The battery level is at 78 percent. Estimated range is 12 kilometers. Would you like me to find the nearest charging station?</textarea>
+  <label>Voice name</label>
+  <input type="text" id="speak-voice" value="vandi">
+  <div class="row">
+    <div>
+      <label>Language</label>
+      <select id="speak-lang">
+        <option value="Auto">Auto</option>
+        <option value="English" selected>English</option>
+        <option value="Chinese">Chinese</option>
+      </select>
+    </div>
+  </div>
+  <div class="robot-toggle">
+    <input type="checkbox" id="speak-robot" checked>
+    <label for="speak-robot">🤖 Robot voice effect</label>
+  </div>
+  <button class="primary" onclick="runSpeak()">Speak</button>
+  <div class="result" id="result-speak" style="display:none"></div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'speak') refreshVoices();
+  });
+});
+
+// Health check
+async function checkHealth() {
+  try {
+    const r = await fetch(API + '/health');
+    const d = await r.json();
+    document.getElementById('statusDot').className = 'dot ok';
+    document.getElementById('statusText').textContent =
+      `Server OK — Device: ${d.device} | Models loaded: design=${d.models_loaded.design}, base=${d.models_loaded.base} | Voices: ${d.cached_voices.length}`;
+  } catch {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = 'Server offline — start vandi-tts-server.py on port 7861';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 10000);
+
+// Refresh voices
+async function refreshVoices() {
+  try {
+    const r = await fetch(API + '/voices');
+    const d = await r.json();
+    const list = document.getElementById('voices-list');
+    const names = Object.keys(d.voices);
+    if (names.length === 0) {
+      list.innerHTML = '<em style="color:#666">No voices cached yet. Create one first.</em>';
+    } else {
+      list.innerHTML = names.map(n =>
+        `<span class="voice-chip" onclick="selectVoice('${n}')">${n}</span>`
+      ).join('');
+    }
+  } catch {}
+}
+
+function selectVoice(name) {
+  document.getElementById('speak-voice').value = name;
+  document.querySelectorAll('.voice-chip').forEach(c => c.classList.remove('selected'));
+  event.target.classList.add('selected');
+}
+
+function showLoading(id) {
+  const el = document.getElementById(id);
+  el.style.display = 'block';
+  el.innerHTML = '<span class="spinner"></span> Generating audio... (first run loads the model, may take 30-60s)';
+}
+
+function showAudio(id, blob, time) {
+  const el = document.getElementById(id);
+  const url = URL.createObjectURL(blob);
+  el.innerHTML = `<div class="meta">Generated in ${time}s</div><audio controls autoplay src="${url}"></audio>`;
+}
+
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<div style="color:#f66">Error: ${msg}</div>`;
+}
+
+async function runDesign() {
+  showLoading('result-design');
+  const t0 = Date.now();
+  try {
+    const r = await fetch(API + '/tts/design', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text: document.getElementById('design-text').value,
+        language: document.getElementById('design-lang').value,
+        instruct: document.getElementById('design-instruct').value,
+        robot: document.getElementById('design-robot').checked,
+      })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    showAudio('result-design', blob, ((Date.now() - t0) / 1000).toFixed(1));
+  } catch (e) { showError('result-design', e.message); }
+  checkHealth();
+}
+
+async function runClone() {
+  const fileInput = document.getElementById('clone-audio');
+  if (!fileInput.files.length) { alert('Select a reference audio file'); return; }
+  showLoading('result-clone');
+  const t0 = Date.now();
+  try {
+    // First upload the ref audio as base64
+    const file = fileInput.files[0];
+    const buf = await file.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const r = await fetch(API + '/tts/clone', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text: document.getElementById('clone-text').value,
+        language: document.getElementById('clone-lang').value,
+        ref_audio: 'data:audio/wav;base64,' + b64,
+        ref_text: document.getElementById('clone-ref-text').value,
+        robot: document.getElementById('clone-robot').checked,
+      })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    showAudio('result-clone', blob, ((Date.now() - t0) / 1000).toFixed(1));
+  } catch (e) { showError('result-clone', e.message); }
+  checkHealth();
+}
+
+async function runCreate() {
+  showLoading('result-create');
+  const t0 = Date.now();
+  try {
+    const r = await fetch(API + '/voice/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: document.getElementById('create-name').value,
+        instruct: document.getElementById('create-instruct').value,
+        sample_text: document.getElementById('create-sample').value,
+        language: document.getElementById('create-lang').value,
+      })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    document.getElementById('result-create').style.display = 'block';
+    document.getElementById('result-create').innerHTML =
+      `<div style="color:#4f4">✓ Voice "${d.name}" created in ${((Date.now() - t0) / 1000).toFixed(1)}s</div>`;
+    refreshVoices();
+  } catch (e) { showError('result-create', e.message); }
+  checkHealth();
+}
+
+async function runUpload() {
+  const fileInput = document.getElementById('upload-audio');
+  if (!fileInput.files.length) { alert('Select an audio file'); return; }
+  showLoading('result-upload');
+  try {
+    const fd = new FormData();
+    fd.append('name', document.getElementById('upload-name').value);
+    fd.append('ref_text', document.getElementById('upload-ref-text').value);
+    fd.append('audio', fileInput.files[0]);
+    const r = await fetch(API + '/voice/clone-upload', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    document.getElementById('result-upload').style.display = 'block';
+    document.getElementById('result-upload').innerHTML =
+      `<div style="color:#4f4">✓ Voice "${d.name}" saved</div>`;
+    refreshVoices();
+  } catch (e) { showError('result-upload', e.message); }
+}
+
+async function runSpeak() {
+  showLoading('result-speak');
+  const t0 = Date.now();
+  try {
+    const r = await fetch(API + '/tts/speak', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text: document.getElementById('speak-text').value,
+        language: document.getElementById('speak-lang').value,
+        voice_name: document.getElementById('speak-voice').value,
+        robot: document.getElementById('speak-robot').checked,
+      })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    showAudio('result-speak', blob, ((Date.now() - t0) / 1000).toFixed(1));
+  } catch (e) { showError('result-speak', e.message); }
+  checkHealth();
+}
+</script>
+</body>
+</html>
