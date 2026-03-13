@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Mic, Loader2, RefreshCw, Save } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -25,13 +25,33 @@ const LANGUAGES = [
   { value: 'it', label: 'Italian' },
 ]
 
-export default function TTS() {
-  type CustomProfile = { id: string; name: string; description: string }
+type LegacyProfile = {
+  id: string
+  name: string
+  description: string
+}
 
+type RealProfile = {
+  id: string
+  name: string
+  description: string
+  voice_name?: string
+  tags?: string[]
+}
+
+type SelectedProfile = {
+  id: string
+  name: string
+  description: string
+  profileType: 'legacy' | 'real'
+  tags?: string[]
+}
+
+export default function TTS() {
   const [text, setText] = useState('Welcome to IMCG Sound.')
   const [language, setLanguage] = useState('en')
   const [preset, setPreset] = useState('narrator')
-  const [selectedCustomProfileId, setSelectedCustomProfileId] = useState('')
+  const [selectedProfileKey, setSelectedProfileKey] = useState('')
   const [description, setDescription] = useState(PRESETS.narrator)
   const [robot, setRobot] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -40,74 +60,117 @@ export default function TTS() {
   const [saveName, setSaveName] = useState('')
   const [saveTags, setSaveTags] = useState('')
   const [saving, setSaving] = useState(false)
-  const [customProfiles, setCustomProfiles] = useState<CustomProfile[]>([])
+  const [legacyProfiles, setLegacyProfiles] = useState<LegacyProfile[]>([])
+  const [realProfiles, setRealProfiles] = useState<RealProfile[]>([])
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [profilesError, setProfilesError] = useState('')
 
-  const selectedCustomProfile = customProfiles.find((profile) => profile.id === selectedCustomProfileId)
+  const selectedProfile = useMemo<SelectedProfile | null>(() => {
+    if (!selectedProfileKey) return null
+    const [profileType, id] = selectedProfileKey.split(':')
+    if (profileType === 'legacy') {
+      const profile = legacyProfiles.find((p) => p.id === id)
+      if (!profile) return null
+      return { ...profile, profileType: 'legacy' }
+    }
+    if (profileType === 'real') {
+      const profile = realProfiles.find((p) => p.id === id)
+      if (!profile) return null
+      return { ...profile, profileType: 'real' }
+    }
+    return null
+  }, [legacyProfiles, realProfiles, selectedProfileKey])
 
-  const fetchCustomProfiles = async () => {
+  const fetchProfiles = async () => {
     setLoadingProfiles(true)
     setProfilesError('')
     try {
-      const resp = await fetch('/api/profiles')
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ detail: 'Request failed' }))
-        throw new Error(err.detail || 'Could not load custom voice profiles')
+      const [legacyResp, realResp] = await Promise.all([
+        fetch('/api/profiles'),
+        fetch('/api/real-profiles'),
+      ])
+
+      if (!legacyResp.ok) {
+        const err = await legacyResp.json().catch(() => ({ detail: 'Request failed' }))
+        throw new Error(err.detail || 'Could not load voice profiles')
       }
-      const data = await resp.json()
-      setCustomProfiles(Array.isArray(data.profiles) ? data.profiles : [])
+      if (!realResp.ok) {
+        const err = await realResp.json().catch(() => ({ detail: 'Request failed' }))
+        throw new Error(err.detail || 'Could not load real profiles')
+      }
+
+      const legacyData = await legacyResp.json()
+      const realData = await realResp.json()
+      setLegacyProfiles(Array.isArray(legacyData.profiles) ? legacyData.profiles : [])
+      setRealProfiles(Array.isArray(realData.profiles) ? realData.profiles : [])
     } catch (e) {
-      setProfilesError(e instanceof Error ? e.message : 'Could not load custom voice profiles')
+      setProfilesError(e instanceof Error ? e.message : 'Could not load profiles')
     } finally {
       setLoadingProfiles(false)
     }
   }
 
   useEffect(() => {
-    fetchCustomProfiles()
+    fetchProfiles()
     const onProfilesUpdated = () => {
-      fetchCustomProfiles()
+      fetchProfiles()
     }
     window.addEventListener('profiles-updated', onProfilesUpdated)
-    return () => window.removeEventListener('profiles-updated', onProfilesUpdated)
+    window.addEventListener('real-profiles-updated', onProfilesUpdated)
+    return () => {
+      window.removeEventListener('profiles-updated', onProfilesUpdated)
+      window.removeEventListener('real-profiles-updated', onProfilesUpdated)
+    }
   }, [])
 
   useEffect(() => {
-    if (selectedCustomProfile) {
-      setDescription(selectedCustomProfile.description)
+    if (selectedProfile) {
+      setDescription(selectedProfile.description)
       return
     }
     setDescription(PRESETS[preset] || '')
-  }, [selectedCustomProfileId, selectedCustomProfile, preset])
+  }, [selectedProfile, preset])
 
   const handlePresetChange = (p: string) => {
     setPreset(p)
-    if (!selectedCustomProfileId && PRESETS[p]) {
+    if (!selectedProfileKey && PRESETS[p]) {
       setDescription(PRESETS[p])
     }
   }
 
-  const handleCustomProfileChange = (profileId: string) => {
-    setSelectedCustomProfileId(profileId)
+  const handleProfileChange = (profileKey: string) => {
+    setSelectedProfileKey(profileKey)
   }
 
   const handleGenerate = async () => {
     setGenerating(true)
     setAudioUrl(null)
     try {
-      const resp = await fetch('/api/tts/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text, language,
-          instruct: description,
-          voice_description: description,
-          voice_name: preset,
-          robot,
-          ...(selectedCustomProfileId ? { voice_profile_id: selectedCustomProfileId } : {}),
-        }),
-      })
+      const resp =
+        selectedProfile?.profileType === 'real'
+          ? await fetch('/api/tts/generate-real', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text,
+                language,
+                real_profile_id: selectedProfile.id,
+                robot,
+              }),
+            })
+          : await fetch('/api/tts/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text,
+                language,
+                instruct: description,
+                voice_description: description,
+                voice_name: preset,
+                robot,
+                ...(selectedProfile?.profileType === 'legacy' ? { voice_profile_id: selectedProfile.id } : {}),
+              }),
+            })
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: 'Request failed' }))
         throw new Error(err.detail || 'Error')
@@ -153,7 +216,7 @@ export default function TTS() {
         <Mic className="h-6 w-6 text-primary" />
         <div>
           <h1 className="text-2xl font-bold">Text-to-Speech</h1>
-          <p className="text-sm text-muted-foreground">Generate speech using Qwen3-TTS with customizable voices</p>
+          <p className="text-sm text-muted-foreground">Generate speech using presets, saved sound profiles, and tagged real voices</p>
         </div>
       </div>
 
@@ -187,12 +250,12 @@ export default function TTS() {
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Voice Preset</label>
               <select
                 className={`mt-1 w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring transition-colors ${
-                  selectedCustomProfileId
+                  selectedProfile
                     ? 'border-border bg-muted/60 text-muted-foreground opacity-50 cursor-not-allowed'
                     : 'border-border bg-background'
                 }`}
                 value={preset}
-                disabled={!!selectedCustomProfileId}
+                disabled={!!selectedProfile}
                 onChange={e => handlePresetChange(e.target.value)}
               >
                 {Object.keys(PRESETS).map(p => (
@@ -204,30 +267,59 @@ export default function TTS() {
 
           <div>
             <div className="flex items-center justify-between gap-3">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Custom Voice Profiles</label>
-              <Button variant="outline" size="sm" onClick={fetchCustomProfiles} disabled={loadingProfiles}>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Saved Sound Profiles</label>
+              <Button variant="outline" size="sm" onClick={fetchProfiles} disabled={loadingProfiles}>
                 {loadingProfiles ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 Refresh
               </Button>
             </div>
             <select
               className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              value={selectedCustomProfileId}
-              onChange={(e) => handleCustomProfileChange(e.target.value)}
+              value={selectedProfileKey}
+              onChange={(e) => handleProfileChange(e.target.value)}
             >
               <option value="">None</option>
-              {customProfiles.map((cp) => (
-                <option key={cp.id} value={cp.id}>
-                  {cp.name}
-                </option>
-              ))}
+              {legacyProfiles.length > 0 && (
+                <optgroup label="Sound Profiles (V1)">
+                  {legacyProfiles.map((cp) => (
+                    <option key={`legacy:${cp.id}`} value={`legacy:${cp.id}`}>
+                      {cp.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {realProfiles.length > 0 && (
+                <optgroup label="Real Profiles">
+                  {realProfiles.map((rp) => (
+                    <option key={`real:${rp.id}`} value={`real:${rp.id}`}>
+                      {rp.name} [real]
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             {profilesError && <p className="mt-1 text-xs text-red-500">{profilesError}</p>}
-            {selectedCustomProfile && (
+            {!profilesError && realProfiles.length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">Real voices are marked with the <span className="font-semibold">[real]</span> tag.</p>
+            )}
+            {selectedProfile && (
               <div className="mt-2 rounded-md border border-border/70 bg-muted/40 p-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Selected Profile Description</p>
-                <p className="mt-1 text-sm">{selectedCustomProfile.description}</p>
-                <audio controls src={`/api/profiles/${selectedCustomProfile.id}/audio`} className="mt-2 w-full" />
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Selected Profile</p>
+                  <Badge variant={selectedProfile.profileType === 'real' ? 'info' : 'secondary'}>
+                    {selectedProfile.profileType === 'real' ? 'real' : 'v1'}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-sm">{selectedProfile.description}</p>
+                <audio
+                  controls
+                  src={
+                    selectedProfile.profileType === 'real'
+                      ? `/api/real-profiles/${selectedProfile.id}/audio`
+                      : `/api/profiles/${selectedProfile.id}/audio`
+                  }
+                  className="mt-2 w-full"
+                />
               </div>
             )}
           </div>

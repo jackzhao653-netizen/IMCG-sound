@@ -55,6 +55,46 @@ npm run dev
 - `GET /voices` — List cached voices
 - `GET /health` — Health check
 
+## Cross-Machine Real Profile V2 Integration
+
+Use these backend endpoints from another machine connected to this sound studio host.
+
+Base URL format:
+- `http://<studio-host-ip>:7862`
+
+Discover profiles:
+- `GET /api/profiles` for V1 sound profiles
+- `GET /api/real-profiles` for Real Profile V2
+
+Generate with V1 profile:
+```bash
+curl -X POST "http://<studio-host-ip>:7862/api/tts/generate" \
+  -H "Content-Type: application/json" \
+  -o out_v1.wav \
+  -d '{
+    "text": "Hello from remote client",
+    "language": "en",
+    "voice_profile_id": "<v1_profile_id>",
+    "robot": false
+  }'
+```
+
+Generate with Real Profile V2 (fast cached path):
+```bash
+curl -X POST "http://<studio-host-ip>:7862/api/tts/generate-real" \
+  -H "Content-Type: application/json" \
+  -o out_v2.wav \
+  -d '{
+    "text": "Hello from remote client",
+    "language": "en",
+    "real_profile_id": "<real_profile_id>",
+    "robot": false
+  }'
+```
+
+Preview a Real Profile V2 sample clip:
+- `GET /api/real-profiles/{real_profile_id}/audio`
+
 ## CLI
 ```bash
 # Quick CLI wrapper

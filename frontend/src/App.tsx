@@ -4,6 +4,7 @@ import TTS from '@/pages/TTS'
 import SoundProfileLibrary from '@/pages/SoundProfileLibrary'
 import Library from '@/pages/Library'
 import ProfileGenerator from '@/pages/ProfileGenerator'
+import RealProfileGenerator from '@/pages/RealProfileGenerator'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/music" element={<SoundProfileLibrary />} />
         <Route path="/library" element={<Library />} />
         <Route path="/profiles" element={<ProfileGenerator />} />
+        <Route path="/real-profiles" element={<RealProfileGenerator />} />
       </Route>
     </Routes>
   )

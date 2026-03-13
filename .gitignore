@@ -12,3 +12,4 @@ voices/*.npy
 dist/
 .vite-temp/
 tsconfig.tsbuildinfo
+logs/

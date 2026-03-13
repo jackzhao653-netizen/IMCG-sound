@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import soundfile as sf
@@ -38,6 +38,11 @@ from pydantic import BaseModel
 MODEL_DIR = Path(__file__).parent / "models"
 VOICE_CACHE_DIR = Path(__file__).parent / "voices"
 VOICE_CACHE_DIR.mkdir(exist_ok=True)
+PROMPT_CACHE_DIR = VOICE_CACHE_DIR / "prompt_cache"
+PROMPT_CACHE_DIR.mkdir(exist_ok=True)
+
+CLONE_MODE_PROMPT = "prompt"
+CLONE_MODE_XVECTOR = "xvector"
 
 app = FastAPI(title="Vandi TTS", version="0.2.0")
 app.add_middleware(
@@ -116,24 +121,85 @@ def load_model(model_type: str):
     return model
 
 
+def _get_prompt_cache_file(voice_name: str) -> Path:
+    safe_name = "".join(ch for ch in voice_name if ch.isalnum() or ch in ("-", "_"))
+    if not safe_name:
+        safe_name = "voice"
+    return PROMPT_CACHE_DIR / f"{safe_name}.pt"
+
+
+def _save_prompt_cache_to_disk(voice_name: str, prompt: Any):
+    cache_path = _get_prompt_cache_file(voice_name)
+    try:
+        torch.save(prompt, cache_path)
+    except Exception as e:
+        print(f"[prompt] Warning: failed to save disk cache for '{voice_name}': {e}")
+
+
+def _load_prompt_cache_from_disk(voice_name: str) -> Optional[Any]:
+    cache_path = _get_prompt_cache_file(voice_name)
+    if not cache_path.exists():
+        return None
+    try:
+        try:
+            return torch.load(cache_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            return torch.load(cache_path, map_location="cpu")
+    except Exception as e:
+        print(f"[prompt] Warning: bad disk cache for '{voice_name}', rebuilding ({e})")
+        try:
+            cache_path.unlink()
+        except Exception:
+            pass
+        return None
+
+
+def invalidate_voice_prompt_cache(voice_name: str):
+    prompt_cache.pop(voice_name, None)
+    cache_path = _get_prompt_cache_file(voice_name)
+    if cache_path.exists():
+        try:
+            cache_path.unlink()
+        except Exception as e:
+            print(f"[prompt] Warning: failed to remove disk cache for '{voice_name}': {e}")
+
+
 def get_voice_prompt(voice_name: str):
-    """Get or build a cached voice clone prompt (avoids recomputing every call)."""
+    """Get or build a cached voice clone prompt (in-memory + disk cache)."""
     if voice_name in prompt_cache:
         return prompt_cache[voice_name]
 
     if voice_name not in voice_cache:
         raise HTTPException(404, f"Voice '{voice_name}' not found")
 
+    disk_prompt = _load_prompt_cache_from_disk(voice_name)
+    if disk_prompt is not None:
+        prompt_cache[voice_name] = disk_prompt
+        print(f"[prompt] Loaded cached prompt from disk for '{voice_name}'")
+        return disk_prompt
+
     meta = voice_cache[voice_name]
     model = load_model("base")
+    clone_mode = meta.get("clone_mode")
+    if clone_mode not in (CLONE_MODE_PROMPT, CLONE_MODE_XVECTOR):
+        clone_mode = CLONE_MODE_PROMPT if (meta.get("ref_text") or "").strip() else CLONE_MODE_XVECTOR
 
     print(f"[prompt] Building clone prompt for '{voice_name}'...")
     t0 = time.time()
-    prompt = model.create_voice_clone_prompt(
+    prompt_kwargs = dict(
         ref_audio=meta["ref_audio_path"],
         ref_text=meta.get("ref_text", ""),
     )
+    if clone_mode == CLONE_MODE_XVECTOR:
+        prompt_kwargs["x_vector_only_mode"] = True
+    try:
+        prompt = model.create_voice_clone_prompt(**prompt_kwargs)
+    except TypeError:
+        # Older wrappers may not expose x_vector_only_mode in create_voice_clone_prompt.
+        prompt_kwargs.pop("x_vector_only_mode", None)
+        prompt = model.create_voice_clone_prompt(**prompt_kwargs)
     prompt_cache[voice_name] = prompt
+    _save_prompt_cache_to_disk(voice_name, prompt)
     print(f"[prompt] Built in {time.time() - t0:.1f}s (cached for future calls)")
     return prompt
 
@@ -185,6 +251,12 @@ def apply_robot_effect(wav_buf: io.BytesIO, sr: int) -> io.BytesIO:
 def load_voice_cache():
     for f in VOICE_CACHE_DIR.glob("*.json"):
         meta = json.loads(f.read_text())
+        if "clone_mode" not in meta:
+            meta["clone_mode"] = CLONE_MODE_PROMPT if (meta.get("ref_text") or "").strip() else CLONE_MODE_XVECTOR
+            try:
+                f.write_text(json.dumps(meta, indent=2))
+            except Exception:
+                pass
         voice_cache[meta["name"]] = meta
     print(f"[cache] Loaded {len(voice_cache)} cached voices: {list(voice_cache.keys())}")
 
@@ -210,6 +282,7 @@ def list_voices():
                 "instruct": meta.get("instruct", ""),
                 "robot_default": meta.get("robot", False),
                 "ref_audio": meta.get("ref_audio_path", ""),
+                "clone_mode": meta.get("clone_mode", CLONE_MODE_PROMPT),
                 "prompt_cached": name in prompt_cache,
             }
             for name, meta in voice_cache.items()
@@ -301,8 +374,10 @@ def voice_create(req: VoiceCreateRequest):
         "robot": req.robot,
         "ref_audio_path": ref_audio_path,
         "ref_text": req.sample_text,
+        "clone_mode": CLONE_MODE_PROMPT,
         "created_at": time.time(),
     }
+    invalidate_voice_prompt_cache(req.name)
     (VOICE_CACHE_DIR / f"{req.name}.json").write_text(json.dumps(meta, indent=2))
     voice_cache[req.name] = meta
 
@@ -333,9 +408,11 @@ async def voice_clone_upload(
         "instruct": "Cloned from uploaded audio",
         "ref_audio_path": ref_audio_path,
         "ref_text": ref_text,
+        "clone_mode": CLONE_MODE_PROMPT if ref_text.strip() else CLONE_MODE_XVECTOR,
         "robot": True,
         "created_at": time.time(),
     }
+    invalidate_voice_prompt_cache(name)
     (VOICE_CACHE_DIR / f"{name}.json").write_text(json.dumps(meta, indent=2))
     voice_cache[name] = meta
 

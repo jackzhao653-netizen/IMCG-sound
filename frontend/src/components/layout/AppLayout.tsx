@@ -1,12 +1,13 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { Mic, Library, Film, Activity, AudioWaveform } from 'lucide-react'
+import { Mic, Library, Film, Activity, AudioWaveform, Zap } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 const navItems = [
   { to: '/tts', icon: Mic, label: 'Text-to-Speech' },
   { to: '/music', icon: Library, label: 'Sound Profiles' },
   { to: '/profiles', icon: AudioWaveform, label: 'Profiles' },
+  { to: '/real-profiles', icon: Zap, label: 'Real Profile Generator' },
   { to: '/library', icon: Film, label: 'Media Library' },
 ]
 
@@ -100,6 +101,26 @@ export default function AppLayout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
+        <div className="md:hidden border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 sticky top-0 z-10">
+          <nav className="flex items-center gap-1 p-2 overflow-x-auto whitespace-nowrap">
+            {navItems.map(({ to, icon: Icon, label }) => (
+              <NavLink
+                key={`mobile-${to}`}
+                to={to}
+                end={to === '/'}
+                className={({ isActive }) =>
+                  cn(
+                    'inline-flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-colors shrink-0',
+                    isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )
+                }
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
         <Outlet />
       </main>
     </div>
